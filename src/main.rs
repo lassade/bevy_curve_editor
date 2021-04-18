@@ -42,6 +42,7 @@ fn remap(min: f32, max: f32, t: f32, out_min: f32, out_max: f32) -> f32 {
 
 #[inline]
 fn to_dir(a: f32) -> egui::Vec2 {
+    // TODO: There's something wrong with this tangent generation
     let (y, x) = a.atan().sin_cos();
     (x, -y).into()
 }
@@ -61,7 +62,7 @@ fn dot(
     radius: f32,
     select_radius: f32,
     color: egui::Color32,
-) -> bool {
+) -> (bool, bool) {
     let offset = (select_radius, select_radius).into();
     let keyframe_region = egui::Rect {
         min: position - offset,
@@ -72,19 +73,15 @@ fn dot(
         // Hovered
         painter.circle_filled(position, radius * 1.2, egui::Color32::WHITE);
         // Select on mouse down
-        if pointer_down {
-            return true;
-        }
-
-        selected
+        (selected || pointer_down, pointer_down)
     } else if selected {
         // Selected
         painter.circle_filled(position, radius, egui::Color32::YELLOW);
-        true
+        (true, false)
     } else {
         // Default
         painter.circle_filled(position, radius, color);
-        false
+        (false, false)
     }
 }
 
@@ -176,31 +173,26 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
             let tangent_stroke = egui::Stroke::new(1.0, egui::Color32::GRAY);
 
             // Pointer state
-            let pointer_position = response.hover_pos().unwrap_or((-1000.0, -1000.0).into());
+            let pointer_position = response.hover_pos().unwrap_or((-1.0, -1.0).into());
             let pointer_down = response
                 .ctx
                 .input()
                 .pointer
                 .button_down(egui::PointerButton::Primary);
-            let pointer_drag = {
-                let range = curve_editor.display_range;
-                let size = rect.size();
-                let mut delta = response.drag_delta();
-                delta.x = delta.x * range.x / size.x;
-                delta.y = delta.y * range.y / size.y;
-                delta
-            };
 
             if !pointer_down {
                 curve_editor.dragging = false;
             }
+
+            // Render keyframes
             for i in 0..curve_editor.curve.len() {
                 let t = curve_editor.curve.get_time(i as CurveCursor);
                 let v = *curve_editor.curve.get_value(i as CurveCursor);
 
-                let x = remap(min.x, max.x, t, rect.min.x, rect.max.x);
-                let y = remap(min.y, max.y, v, rect.max.y, rect.min.y);
-                let position = egui::Pos2::new(x, y);
+                let position = egui::Pos2::new(
+                    remap(min.x, max.x, t, rect.min.x, rect.max.x),
+                    remap(min.y, max.y, v, rect.max.y, rect.min.y),
+                );
 
                 if !rect.contains(position) {
                     continue;
@@ -209,14 +201,22 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                 let selected = i == curve_editor.selected_keyframe;
 
                 if selected && curve_editor.dragging {
-                    curve_editor
-                        .curve
-                        .set_value(i as CurveCursor, v - pointer_drag.y);
+                    let delta = position - pointer_position;
+                    if (delta.y).abs() > 0.5 {
+                        let v = remap(rect.max.y, rect.min.y, pointer_position.y, min.y, max.y);
+                        curve_editor.curve.set_value(i as CurveCursor, v);
+                    }
 
-                    // // TODO: Changes the keyframe ordering
-                    // curve_editor
-                    //     .curve
-                    //     .set_time(i as CurveCursor, t + pointer_drag.x);
+                    if (delta.x).abs() > 0.5 {
+                        let t = remap(rect.min.x, rect.max.x, pointer_position.x, min.x, max.x);
+                        let k = curve_editor.curve.set_time(i as CurveCursor, t);
+
+                        if let Some(k) = k {
+                            // Keyframe ordering changed
+                            curve_editor.selected_keyframe = k as usize;
+                            continue;
+                        }
+                    }
                 }
 
                 if selected {
@@ -255,7 +255,7 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                 }
 
                 // Keyframe dot
-                if dot(
+                let (select, press) = dot(
                     painter,
                     pointer_position,
                     pointer_down,
@@ -264,9 +264,10 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                     2.5,
                     6.0,
                     color,
-                ) {
+                );
+                if select {
                     curve_editor.selected_keyframe = i;
-                    curve_editor.dragging = pointer_down;
+                    curve_editor.dragging |= press;
                 } else if selected {
                     // Deselect
                     curve_editor.selected_keyframe = usize::MAX;
