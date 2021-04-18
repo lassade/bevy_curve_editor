@@ -1,6 +1,6 @@
 use bevy::{
     math::{
-        curves::{Curve, CurveVariable},
+        curves::{Curve, CurveCursor, CurveVariable},
         interpolation::utils::lerp_unclamped,
     },
     prelude::*,
@@ -8,6 +8,8 @@ use bevy::{
 use bevy_egui::{egui, EguiContext, EguiPlugin};
 
 struct CurveEditor {
+    dragging: bool,
+    selected_keyframe: usize,
     display_offset: Vec2,
     display_range: Vec2,
     curve: CurveVariable<f32>,
@@ -16,6 +18,8 @@ struct CurveEditor {
 fn main() {
     App::build()
         .insert_resource(CurveEditor {
+            dragging: false,
+            selected_keyframe: usize::MAX,
             display_offset: Vec2::new(0.0, -0.5),
             display_range: Vec2::new(2.0, 3.5),
             curve: CurveVariable::with_auto_tangents(
@@ -36,9 +40,57 @@ fn remap(min: f32, max: f32, t: f32, out_min: f32, out_max: f32) -> f32 {
     lerp_unclamped(out_min, out_max, n)
 }
 
+#[inline]
+fn to_dir(a: f32) -> egui::Vec2 {
+    let (y, x) = a.atan().sin_cos();
+    (x, -y).into()
+}
+
+#[inline]
+fn to_tangent(y: f32, x: f32) -> f32 {
+    (-y).atan2(x)
+}
+
+#[inline]
+fn dot(
+    painter: &egui::Painter,
+    pointer_position: egui::Pos2,
+    pointer_down: bool,
+    selected: bool,
+    position: egui::Pos2,
+    radius: f32,
+    select_radius: f32,
+    color: egui::Color32,
+) -> bool {
+    let offset = (select_radius, select_radius).into();
+    let keyframe_region = egui::Rect {
+        min: position - offset,
+        max: position + offset,
+    };
+
+    if keyframe_region.contains(pointer_position) {
+        // Hovered
+        painter.circle_filled(position, radius * 1.2, egui::Color32::WHITE);
+        // Select on mouse down
+        if pointer_down {
+            return true;
+        }
+
+        selected
+    } else if selected {
+        // Selected
+        painter.circle_filled(position, radius, egui::Color32::YELLOW);
+        true
+    } else {
+        // Default
+        painter.circle_filled(position, radius, color);
+        false
+    }
+}
+
 fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiContext>) {
     let curve_editor = &mut *curve_editor;
-    egui::Window::new("Hello")
+    egui::Window::new("Curve Editor")
         .default_size([700.0, 300.0])
         .show(egui_context.ctx(), |ui| {
             let (id, rect) = ui.allocate_space(ui.available_size());
@@ -91,13 +143,15 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
 
             // Painter and style
             let painter = ui.painter();
-            let stroke = egui::Stroke::new(1.0, egui::Color32::RED);
+            let color = egui::Color32::RED;
+            let stroke = egui::Stroke::new(1.0, color);
 
             // Curve display range
             let min = curve_editor.display_offset;
             let max = min + curve_editor.display_range;
             let duration = curve_editor.display_range.x.max(0.0);
 
+            // Curve rendering
             let mut t0 = min.x;
             let (mut cursor, mut v0) = curve_editor.curve.sample_with_cursor(0, t0);
             for i in 1..256 {
@@ -115,6 +169,108 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                 v0 = v1;
                 t0 = t1;
                 cursor = next_cursor;
+            }
+
+            // Curve keyframes
+            // Appearance
+            let tangent_stroke = egui::Stroke::new(1.0, egui::Color32::GRAY);
+
+            // Pointer state
+            let pointer_position = response.hover_pos().unwrap_or((-1000.0, -1000.0).into());
+            let pointer_down = response
+                .ctx
+                .input()
+                .pointer
+                .button_down(egui::PointerButton::Primary);
+            let pointer_drag = {
+                let range = curve_editor.display_range;
+                let size = rect.size();
+                let mut delta = response.drag_delta();
+                delta.x = delta.x * range.x / size.x;
+                delta.y = delta.y * range.y / size.y;
+                delta
+            };
+
+            if !pointer_down {
+                curve_editor.dragging = false;
+            }
+            for i in 0..curve_editor.curve.len() {
+                let t = curve_editor.curve.get_time(i as CurveCursor);
+                let v = *curve_editor.curve.get_value(i as CurveCursor);
+
+                let x = remap(min.x, max.x, t, rect.min.x, rect.max.x);
+                let y = remap(min.y, max.y, v, rect.max.y, rect.min.y);
+                let position = egui::Pos2::new(x, y);
+
+                if !rect.contains(position) {
+                    continue;
+                }
+
+                let selected = i == curve_editor.selected_keyframe;
+
+                if selected && curve_editor.dragging {
+                    curve_editor
+                        .curve
+                        .set_value(i as CurveCursor, v - pointer_drag.y);
+
+                    // // TODO: Changes the keyframe ordering
+                    // curve_editor
+                    //     .curve
+                    //     .set_time(i as CurveCursor, t + pointer_drag.x);
+                }
+
+                if selected {
+                    // Display tangents when selected
+                    let (a, b) = curve_editor.curve.get_in_out_tangent(i as CurveCursor);
+
+                    // In tangent
+                    let a = position - (to_dir(a) * 50.0);
+                    painter.line_segment([position, a], tangent_stroke);
+                    dot(
+                        painter,
+                        pointer_position,
+                        pointer_down,
+                        false,
+                        a,
+                        1.5,
+                        6.0,
+                        egui::Color32::GRAY,
+                    );
+
+                    // Out tangent
+                    let b = position + (to_dir(b) * 50.0);
+                    painter.line_segment([position, b], tangent_stroke);
+                    dot(
+                        painter,
+                        pointer_position,
+                        pointer_down,
+                        false,
+                        b,
+                        1.5,
+                        6.0,
+                        egui::Color32::GRAY,
+                    );
+
+                    // TODO: Edit tangents ...
+                }
+
+                // Keyframe dot
+                if dot(
+                    painter,
+                    pointer_position,
+                    pointer_down,
+                    selected,
+                    position,
+                    2.5,
+                    6.0,
+                    color,
+                ) {
+                    curve_editor.selected_keyframe = i;
+                    curve_editor.dragging = pointer_down;
+                } else if selected {
+                    // Deselect
+                    curve_editor.selected_keyframe = usize::MAX;
+                }
             }
         });
 }
