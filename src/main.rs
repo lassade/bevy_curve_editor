@@ -44,7 +44,7 @@ fn remap(min: f32, max: f32, t: f32, out_min: f32, out_max: f32) -> f32 {
 fn to_dir(a: f32) -> egui::Vec2 {
     // TODO: There's something wrong with this tangent generation
     let (y, x) = a.atan().sin_cos();
-    (x, -y).into()
+    (x, y).into()
 }
 
 #[inline]
@@ -224,7 +224,12 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                     let (a, b) = curve_editor.curve.get_in_out_tangent(i as CurveCursor);
 
                     // In tangent
-                    let a = position - (to_dir(a) * 50.0);
+                    let a = egui::Vec2::new(t, v) - to_dir(a);
+                    let a = egui::Pos2::new(
+                        remap(min.x, max.x, a.x, rect.min.x, rect.max.x),
+                        remap(min.y, max.y, a.y, rect.max.y, rect.min.y),
+                    );
+                    let a = position + (a - position).normalized() * 50.0;
                     painter.line_segment([position, a], tangent_stroke);
                     dot(
                         painter,
@@ -238,7 +243,12 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                     );
 
                     // Out tangent
-                    let b = position + (to_dir(b) * 50.0);
+                    let b = egui::Vec2::new(t, v) + to_dir(b);
+                    let b = egui::Pos2::new(
+                        remap(min.x, max.x, b.x, rect.min.x, rect.max.x),
+                        remap(min.y, max.y, b.y, rect.max.y, rect.min.y),
+                    );
+                    let b = position + (b - position).normalized() * 50.0;
                     painter.line_segment([position, b], tangent_stroke);
                     dot(
                         painter,
