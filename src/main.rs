@@ -1,7 +1,7 @@
 use bevy::{
     math::{
-        curves::{Curve, CurveCursor, CurveVariable},
-        interpolation::utils::lerp_unclamped,
+        curves::{Curve, CurveCursor, CurveVariable, TangentControl},
+        interpolation::{utils::lerp_unclamped, Interpolation},
     },
     prelude::*,
 };
@@ -13,6 +13,7 @@ struct CurveEditor {
     display_offset: Vec2,
     display_range: Vec2,
     curve: CurveVariable<f32>,
+    popup: egui::Pos2,
 }
 
 fn main() {
@@ -27,6 +28,7 @@ fn main() {
                 vec![3.0, 0.0, 1.0, 0.0, 0.5, 0.0, 0.25, 0.0],
             )
             .unwrap(),
+            popup: (0.0, 0.0).into(),
         })
         .add_plugins(DefaultPlugins)
         .add_plugin(EguiPlugin)
@@ -93,7 +95,7 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
             let (id, rect) = ui.allocate_space(ui.available_size());
 
             // Input handling
-            let response = ui.interact(rect, id, egui::Sense::click_and_drag());
+            let mut response = ui.interact(rect, id, egui::Sense::click_and_drag());
             if response.dragged_by(egui::PointerButton::Middle) {
                 // Pan
                 let range = curve_editor.display_range;
@@ -137,6 +139,102 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                     curve_editor.display_offset.x += x1 - x0;
                 }
             }
+
+            let popup_id = id.with("popup");
+
+            if let Some(pos) = response.hover_pos() {
+                if response.secondary_clicked() && !ui.memory().is_popup_open(popup_id) {
+                    curve_editor.popup = pos;
+                    ui.memory().open_popup(popup_id);
+                }
+            }
+
+            let temp = response.rect;
+            response.rect = egui::Rect::from_min_size(curve_editor.popup, (150.0, 1.0).into());
+            egui::popup::popup_below_widget(ui, popup_id, &response, |ui| {
+                let selected = curve_editor.selected_keyframe < curve_editor.curve.len();
+                ui.set_enabled(selected);
+
+                let index = curve_editor
+                    .selected_keyframe
+                    .min(CurveCursor::MAX as usize) as CurveCursor;
+
+                let (lerp_mode, tangent_mode) = if selected {
+                    (
+                        curve_editor.curve.get_interpolation(index),
+                        curve_editor.curve.get_tangent_control(index),
+                    )
+                } else {
+                    (Interpolation::Hermite, Default::default())
+                };
+
+                if ui
+                    .selectable_label(lerp_mode == Interpolation::Step, "Step")
+                    .clicked()
+                {
+                    curve_editor
+                        .curve
+                        .set_interpolation(index, Interpolation::Step);
+                }
+
+                if ui
+                    .selectable_label(lerp_mode == Interpolation::Linear, "Linear")
+                    .clicked()
+                {
+                    curve_editor
+                        .curve
+                        .set_interpolation(index, Interpolation::Linear);
+                }
+
+                ui.separator();
+
+                let hermite = lerp_mode == Interpolation::Hermite;
+                if ui
+                    .selectable_label(hermite && tangent_mode == TangentControl::Auto, "Auto")
+                    .clicked()
+                {
+                    curve_editor
+                        .curve
+                        .set_interpolation(index, Interpolation::Hermite);
+                    curve_editor
+                        .curve
+                        .set_tangent_control(index, TangentControl::Auto);
+                }
+                if ui
+                    .selectable_label(hermite && tangent_mode == TangentControl::Free, "Free")
+                    .clicked()
+                {
+                    curve_editor
+                        .curve
+                        .set_interpolation(index, Interpolation::Hermite);
+                    curve_editor
+                        .curve
+                        .set_tangent_control(index, TangentControl::Free);
+                }
+                if ui
+                    .selectable_label(hermite && tangent_mode == TangentControl::Flat, "Flat")
+                    .clicked()
+                {
+                    curve_editor
+                        .curve
+                        .set_interpolation(index, Interpolation::Hermite);
+                    curve_editor
+                        .curve
+                        .set_tangent_control(index, TangentControl::Flat);
+                }
+                if ui
+                    .selectable_label(hermite && tangent_mode == TangentControl::Broken, "Broken")
+                    .clicked()
+                {
+                    curve_editor
+                        .curve
+                        .set_interpolation(index, Interpolation::Hermite);
+                    curve_editor
+                        .curve
+                        .set_tangent_control(index, TangentControl::Broken);
+                }
+            });
+            response.rect = temp;
 
             // Painter and style
             let painter = ui.painter();
