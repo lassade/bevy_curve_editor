@@ -7,5 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { path = "../bevy" }
-bevy_egui = { path = "../bevy_egui" }
+bevy = { git = "https://github.com/lassade/bevy", branch = "curves-and-lerp" }
+bevy_egui = { git = "https://github.com/jakobhellermann/bevy_egui", branch = "bevy-main" }
+
+[patch."https://github.com/bevyengine/bevy"]
+bevy = { git = "https://github.com/lassade/bevy", branch = "curves-and-lerp" }

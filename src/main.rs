@@ -286,6 +286,42 @@ fn ui_example(mut curve_editor: ResMut<CurveEditor>, egui_context: Res<EguiConte
                 curve_editor.dragging = false;
             }
 
+            // Insert keyframe
+            {
+                let t = remap(rect.min.x, rect.max.x, pointer_position.x, min.x, max.x);
+                let v = curve.sample(t);
+
+                let position = egui::Pos2 {
+                    x: pointer_position.x,
+                    y: remap(min.y, max.y, v, rect.max.y, rect.min.y),
+                };
+
+                ui.painter()
+                    .circle_filled(position, 2.0, egui::Color32::GRAY);
+
+                if ui.input().key_pressed(egui::Key::I) {
+                    curve_editor.selected_keyframe = curve
+                        .insert()
+                        .set_time(t)
+                        .set_value(v)
+                        .set_mode(Interpolation::Hermite)
+                        .done()
+                        .map_or(usize::MAX, |i| i as usize);
+
+                    println!("{:?}", &curve);
+                }
+            }
+
+            // Delete selected keyframe
+            {
+                if curve_editor.selected_keyframe != usize::MAX
+                    && ui.input().key_pressed(egui::Key::D)
+                {
+                    curve.remove(curve_editor.selected_keyframe as CurveCursor);
+                    curve_editor.selected_keyframe = usize::MAX;
+                }
+            }
+
             // Render keyframes
             for i in 0..curve.len() {
                 let t = curve.get_time(i as CurveCursor);
